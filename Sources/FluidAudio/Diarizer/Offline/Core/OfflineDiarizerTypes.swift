@@ -73,25 +73,47 @@ public struct OfflineDiarizerConfig: Sendable {
         }
     }
 
+    /// Strategy for skipping redundant embedding extractions in the offline pipeline.
+    ///
+    /// With overlapping segmentation windows (e.g., step ratio 0.15 = 85% overlap),
+    /// consecutive windows produce nearly identical speaker masks for stable speech regions.
+    /// Skipping the embedding model call for these redundant windows saves significant compute
+    /// (the embedding model is the pipeline bottleneck at ~6.5ms per call on ANE).
+    public enum EmbeddingSkipStrategy: Sendable {
+        /// No skipping — extract every embedding (default).
+        case none
+        /// Skip if the speaker mask has cosine similarity ≥ threshold compared to the mask
+        /// that produced the currently cached embedding for this speaker. Prevents drift by
+        /// always comparing against the mask that generated the cached embedding, not a
+        /// rolling previous mask.
+        ///
+        /// Recommended threshold: 0.95 (≤1pp DER cost across VoxConverse/SCOTUS/Earnings-21).
+        case maskSimilarity(threshold: Float)
+    }
+
     public struct Embedding: Sendable {
         public var batchSize: Int
         public var excludeOverlap: Bool
         public var minSegmentDurationSeconds: Double
+        public var skipStrategy: EmbeddingSkipStrategy
 
         public static let community = Embedding(
             batchSize: 32,
             excludeOverlap: true,
-            minSegmentDurationSeconds: 1.0
+            minSegmentDurationSeconds: 1.0,
+            skipStrategy: .none
         )
 
         public init(
             batchSize: Int,
             excludeOverlap: Bool,
-            minSegmentDurationSeconds: Double
+            minSegmentDurationSeconds: Double,
+            skipStrategy: EmbeddingSkipStrategy = .none
         ) {
             self.batchSize = batchSize
             self.excludeOverlap = excludeOverlap
             self.minSegmentDurationSeconds = minSegmentDurationSeconds
+            self.skipStrategy = skipStrategy
         }
     }
 
@@ -160,10 +182,20 @@ public struct OfflineDiarizerConfig: Sendable {
     public struct PostProcessing: Sendable {
         public var minGapDurationSeconds: Double
 
-        public static let community = PostProcessing(minGapDurationSeconds: 0.1)
+        /// When true, output segments are made non-overlapping by trimming later segments
+        /// so that only one speaker is active at any given time.
+        /// This is independent of `Embedding.excludeOverlap` which controls overlap masking
+        /// during embedding extraction.
+        public var exclusiveSegments: Bool
 
-        public init(minGapDurationSeconds: Double) {
+        public static let community = PostProcessing(
+            minGapDurationSeconds: 0.1,
+            exclusiveSegments: true
+        )
+
+        public init(minGapDurationSeconds: Double, exclusiveSegments: Bool = true) {
             self.minGapDurationSeconds = minGapDurationSeconds
+            self.exclusiveSegments = exclusiveSegments
         }
     }
 
@@ -209,8 +241,10 @@ public struct OfflineDiarizerConfig: Sendable {
         segmentationStepRatio: Double = Segmentation.community.stepRatio,
         embeddingBatchSize: Int = Embedding.community.batchSize,
         embeddingExcludeOverlap: Bool = Embedding.community.excludeOverlap,
+        embeddingSkipStrategy: EmbeddingSkipStrategy = Embedding.community.skipStrategy,
         minSegmentDuration: Double = Embedding.community.minSegmentDurationSeconds,
         minGapDuration: Double = PostProcessing.community.minGapDurationSeconds,
+        exclusiveSegments: Bool = PostProcessing.community.exclusiveSegments,
         speechOnsetThreshold: Float = Segmentation.community.speechOnsetThreshold,
         speechOffsetThreshold: Float = Segmentation.community.speechOffsetThreshold,
         segmentationMinDurationOn: Double = Segmentation.community.minDurationOn,
@@ -232,7 +266,8 @@ public struct OfflineDiarizerConfig: Sendable {
             embedding: Embedding(
                 batchSize: embeddingBatchSize,
                 excludeOverlap: embeddingExcludeOverlap,
-                minSegmentDurationSeconds: minSegmentDuration
+                minSegmentDurationSeconds: minSegmentDuration,
+                skipStrategy: embeddingSkipStrategy
             ),
             clustering: Clustering(
                 threshold: clusteringThreshold,
@@ -243,7 +278,10 @@ public struct OfflineDiarizerConfig: Sendable {
                 maxIterations: maxVBxIterations,
                 convergenceTolerance: convergenceTolerance
             ),
-            postProcessing: PostProcessing(minGapDurationSeconds: minGapDuration),
+            postProcessing: PostProcessing(
+                minGapDurationSeconds: minGapDuration,
+                exclusiveSegments: exclusiveSegments
+            ),
             export: Export(embeddingsPath: embeddingExportPath)
         )
     }
@@ -395,10 +433,9 @@ public struct OfflineDiarizerConfig: Sendable {
         set { embedding.excludeOverlap = newValue }
     }
 
-    @available(*, deprecated, renamed: "embeddingExcludeOverlap")
-    public var shouldExcludeOverlaps: Bool {
-        get { embeddingExcludeOverlap }
-        set { embeddingExcludeOverlap = newValue }
+    public var embeddingSkipStrategy: EmbeddingSkipStrategy {
+        get { embedding.skipStrategy }
+        set { embedding.skipStrategy = newValue }
     }
 
     public var minSegmentDuration: Double {
@@ -409,6 +446,11 @@ public struct OfflineDiarizerConfig: Sendable {
     public var minGapDuration: Double {
         get { postProcessing.minGapDurationSeconds }
         set { postProcessing.minGapDurationSeconds = newValue }
+    }
+
+    public var exclusiveSegments: Bool {
+        get { postProcessing.exclusiveSegments }
+        set { postProcessing.exclusiveSegments = newValue }
     }
 
     public var embeddingExportPath: String? {

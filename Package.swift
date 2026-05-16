@@ -12,25 +12,18 @@ let package = Package(
             name: "FluidAudio",
             targets: ["FluidAudio"]
         ),
-        .library(
-            name: "FluidAudioTTS",
-            targets: ["FluidAudioTTS"]
-        ),
         .executable(
             name: "fluidaudiocli",
             targets: ["FluidAudioCLI"]
         ),
     ],
-    dependencies: [
-        .package(url: "https://github.com/huggingface/swift-transformers", from: "1.1.6")
-    ],
+    dependencies: [],
     targets: [
         .target(
             name: "FluidAudio",
             dependencies: [
                 "FastClusterWrapper",
                 "MachTaskSelfWrapper",
-                .product(name: "Tokenizers", package: "swift-transformers"),
             ],
             path: "Sources/FluidAudio",
             exclude: [
@@ -50,24 +43,10 @@ let package = Package(
             path: "Sources/MachTaskSelfWrapper",
             publicHeadersPath: "include"
         ),
-        // TTS targets are always available for FluidAudioTTS product
-        .binaryTarget(
-            name: "ESpeakNG",
-            path: "Frameworks/ESpeakNG.xcframework"
-        ),
-        .target(
-            name: "FluidAudioTTS",
-            dependencies: [
-                "FluidAudio",
-                "ESpeakNG",
-            ],
-            path: "Sources/FluidAudioTTS"
-        ),
         .executableTarget(
             name: "FluidAudioCLI",
             dependencies: [
                 "FluidAudio",
-                "FluidAudioTTS",
             ],
             path: "Sources/FluidAudioCLI",
             exclude: ["README.md"],
@@ -79,7 +58,7 @@ let package = Package(
             name: "FluidAudioTests",
             dependencies: [
                 "FluidAudio",
-                "FluidAudioTTS",
+                "FluidAudioCLI",
             ]
         ),
     ],
