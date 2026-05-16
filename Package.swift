@@ -28,6 +28,9 @@ let package = Package(
             path: "Sources/FluidAudio",
             exclude: [
                 "Frameworks"
+            ],
+            swiftSettings: [
+                .swiftLanguageMode(.v5)
             ]
         ),
         .target(
